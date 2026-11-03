@@ -8,7 +8,7 @@ import type { Config } from './config.js';
 import { httpErrorHandler } from './errors.js';
 import { createMcpServer } from './mcp.js';
 
-export function createApp(config: Config) {
+export function createApp(config: Config, app = express()) {
   const store =
     config.GOOGLE_SHEETS_SPREADSHEET_ID &&
     (config.GOOGLE_APPLICATION_CREDENTIALS ||
@@ -20,7 +20,6 @@ export function createApp(config: Config) {
     store && config.PAYSTACK_SECRET_KEY
       ? new PaymentService(store, config.PAYSTACK_SECRET_KEY)
       : undefined;
-  const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
     if (!config.ALLOWED_HOSTS.includes(req.hostname)) {
