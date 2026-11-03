@@ -1,3 +1,6 @@
+import { BookingService } from './bookings.js';
+import { GoogleSheets } from './sheets.js';
+import { PaymentService } from './payments.js';
 import express from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { bearerAuth } from './auth.js';
@@ -6,6 +9,17 @@ import { httpErrorHandler } from './errors.js';
 import { createMcpServer } from './mcp.js';
 
 export function createApp(config: Config) {
+  const store =
+    config.GOOGLE_SHEETS_SPREADSHEET_ID &&
+    (config.GOOGLE_APPLICATION_CREDENTIALS ||
+      config.GOOGLE_SERVICE_ACCOUNT_JSON)
+      ? new GoogleSheets(config)
+      : undefined;
+  const bookings = store ? new BookingService(store) : undefined;
+  const payments =
+    store && config.PAYSTACK_SECRET_KEY
+      ? new PaymentService(store, config.PAYSTACK_SECRET_KEY)
+      : undefined;
   const app = express();
   app.disable('x-powered-by');
   app.use((req, res, next) => {
@@ -29,12 +43,16 @@ export function createApp(config: Config) {
     res.json({
       status: 'ok',
       service: 'therapydesk',
-      integrations: 'not_configured',
+      integrations: payments
+        ? 'sheets_and_paystack_configured'
+        : bookings
+          ? 'sheets_configured_paystack_pending'
+          : 'not_configured',
     });
   });
   app.use('/mcp', bearerAuth(config.MCP_BEARER_TOKEN));
   app.post('/mcp', express.json({ limit: '32kb' }), async (req, res, next) => {
-    const server = createMcpServer();
+    const server = createMcpServer(bookings, payments);
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

@@ -12,10 +12,11 @@ assistance boundaries.
 
 The TypeScript MCP server foundation is implemented: stateless Streamable HTTP,
 bearer authentication, environment validation, input schemas, and safe error
-responses. All three registered tools currently return
-`INTEGRATION_NOT_CONFIGURED`; they do not create bookings, payment links, or
-external writes. Google Sheets, Paystack, deployment, and Chord/WhatsApp
-connections remain pending.
+responses. Google Sheets availability and booking tools are implemented. They
+activate when the spreadsheet ID and service account credentials are configured.
+Paystack test checkout links are implemented and activate when a test secret key
+and Sheets are configured. Payment verification remains manual. Deployment and
+Chord/WhatsApp connections remain pending.
 
 ## Run locally
 
@@ -78,18 +79,18 @@ if needed for registration, is a separate credential.
 
 ## Tool contracts
 
-| Tool                | Inputs                                                                    | Current result                            |
-| ------------------- | ------------------------------------------------------------------------- | ----------------------------------------- |
-| check_availability  | service_id and valid YYYY-MM-DD date                                      | Explicit integration-not-configured error |
-| create_booking      | slot_id, client_name, client_email, adult_confirmed=true, UUID request_id | Explicit integration-not-configured error |
-| create_payment_link | booking_id                                                                | Explicit integration-not-configured error |
+| Tool                | Inputs                                                                    | Current result                                         |
+| ------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------ |
+| check_availability  | service_id and valid YYYY-MM-DD date                                      | Available dated slots from Sheets                      |
+| create_booking      | slot_id, client_name, client_email, adult_confirmed=true, UUID request_id | Durable pending-payment booking                        |
+| create_payment_link | booking_id                                                                | Saved or newly initialized Paystack test checkout link |
 
 Accepted service IDs are `intro_consultation` and `individual_session`. IDs are
 bounded alphanumeric strings with underscores or hyphens. Request IDs must be
-reused for retries of the same booking attempt. Inputs are validated, but live
-scheduling checks and durable idempotency require the next integration stage.
-Unknown input fields are rejected; payment amounts cannot be supplied by
-callers.
+reused for retries of the same booking attempt. The server enforces configured
+service fees, durations, weekday/time rules, and the 24-hour to 14-day advance
+booking window. Unknown input fields are rejected; payment amounts cannot be
+supplied by callers.
 
 ## Skill package
 
@@ -114,15 +115,85 @@ response. File creation alone does not publish anything to Chord.
 
 ## Next implementation steps
 
-1. Implement business logic behind `check_availability`, `create_booking`, and
-   `create_payment_link`.
-2. Connect a test Google Sheet and Paystack test mode.
-3. Add server-side scheduling, durable retry handling, and integration error
-   mapping.
-4. Verify validation, retries, partial failures, and external actions.
-5. Deploy to public HTTPS and connect to Chord.
-6. Test the WhatsApp simulator and owner workflow.
-7. Complete field notes, go-live note, and a three-minute recording.
+1. Add dated test slots and verify the Google Sheets booking workflow.
+2. Configure a Paystack test key and verify checkout links with fictional
+   bookings.
+3. Deploy to public HTTPS and connect to Chord.
+4. Test the WhatsApp simulator and owner workflow.
+5. Complete field notes, go-live note, and a three-minute recording.
+
+## Google Sheets configuration
+
+Enable the Google Sheets API and share the spreadsheet with the service account
+as Editor. Set `GOOGLE_SHEETS_SPREADSHEET_ID` and either
+`GOOGLE_APPLICATION_CREDENTIALS` (local absolute JSON file path) or
+`GOOGLE_SERVICE_ACCOUNT_JSON` (full JSON string in Vercel's environment
+settings). Never commit the key. The local path is not available on Vercel.
+
+Required headers, in order:
+
+- Slots: Slot ID, Service ID, Start Time, End Time, Timezone
+- Bookings: Booking ID, Request ID, Slot ID, Client Name, Client Email, Booking
+  Status, Amount, Currency, Payment Reference, Payment URL, Created At
+
+Enter slot timestamps as plain ISO 8601 text with timezone, for example
+`2026-11-04T09:00:00+01:00` through `2026-11-04T09:20:00+01:00`, timezone
+`Africa/Lagos`, service `intro_consultation`. Use unique immutable slot IDs and
+unique appointment start times. Slots must follow the schedule in the skill. The
+server does not generate slots. Empty tabs return no availability.
+
+Bookings store amounts in kobo and start as `pending_payment`. Any existing
+booking row blocks its slot, regardless of status; cancellation/reopening is not
+implemented. A repeated request ID with identical client/slot details returns
+the original booking, even after the booking window passes. Changed details
+return `REQUEST_CONFLICT`.
+
+Each booking atomically creates two hidden `_reservation_*` sheets (one slot
+claim and one request claim) and appends a literal-text booking row using Sheets
+`batchUpdate`. Unique sheet IDs and titles reject competing claims; hash
+collisions fail closed. This avoids a process-local lock on Vercel. Do not
+delete these marker sheets or reuse/change booked slot IDs or times. Manual
+edits bypass the server's protections. Hidden sheets consume spreadsheet
+capacity, so this scheme is intended for the small assessment/demo workload. For
+a larger deployment use a transactional datastore or a dedicated serialized
+booking service. Ambiguous write failures are reconciled against Bookings; retry
+with the same request ID rather than issuing a new one.
+
+Health reports configuration presence, not Google credential validity or payment
+readiness. Authentication and Sheets API failures are returned without exposing
+Google's raw error details or credentials.
+
+## Paystack test checkout links
+
+Set `PAYSTACK_SECRET_KEY=sk_test_...` in `.env` (or hosting secrets), then
+restart the server. Only test secret keys are accepted; live keys fail startup
+validation. Sheets must also be configured. Do not share or commit the key.
+
+After `create_booking`, call `create_payment_link` with its `booking_id` in MCP
+Inspector. The server initializes a Paystack transaction with the stored email,
+NGN fee in kobo, and a deterministic reference derived from the booking ID. It
+writes Payment Reference and Payment URL to columns I and J, then returns
+`payment_url`, `payment_reference`, `amount`, `currency`, and `test_mode: true`.
+Repeated calls return the saved link. The booking remains `pending_payment`; a
+checkout URL or redirect is not proof of payment. Verification/webhooks are not
+implemented.
+
+Missing bookings, duplicate booking IDs, non-pending statuses, invalid fees, and
+conflicting saved payment fields fail without initializing a transaction. If
+Paystack or Sheets fails, retry with the same booking ID. An ambiguous
+initialization may have created a transaction without saving its URL. The tool
+reuses the same reference and reports `PAYMENT_UNCONFIRMED` rather than creating
+a different transaction. If retries cannot recover, the owner must reconcile
+that reference in Paystack. Do not create a replacement booking to work around
+it. A lost Sheets write response is reconciled by rereading the saved payment
+fields.
+
+Keep Bookings append-only during server operations: do not sort, insert, delete,
+or move its rows while writes are in progress. Use filter views to inspect data.
+Payment fields are updated by the row position read from Sheets.
+
+Tests mock Paystack; a real test checkout still requires your own test key. API
+contract: [Paystack Transactions](https://paystack.com/docs/api/transaction/).
 
 ## Owner workflow
 

@@ -1,3 +1,5 @@
+import { BookingService } from './bookings.js';
+import type { PaymentService } from './payments.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ToolError, toolFailure } from './errors.js';
 import {
@@ -16,23 +18,36 @@ async function unavailable() {
   );
 }
 
-export function createMcpServer() {
+export function createMcpServer(
+  bookings?: BookingService,
+  payments?: PaymentService,
+) {
+  const run = async (operation: () => Promise<unknown>) => {
+    try {
+      return {
+        content: [
+          { type: 'text' as const, text: JSON.stringify(await operation()) },
+        ],
+      };
+    } catch (error) {
+      return toolFailure(error);
+    }
+  };
   const server = new McpServer({ name: 'therapydesk', version: '0.1.0' });
   server.registerTool(
     'check_availability',
     {
-      description:
-        'Check dated appointment slots in Africa/Lagos. Currently unavailable: Google Sheets integration is not implemented.',
+      description: 'Check dated appointment slots in Africa/Lagos.',
       inputSchema: availabilitySchema,
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
-    unavailable,
+    bookings ? (input) => run(() => bookings.availability(input)) : unavailable,
   );
   server.registerTool(
     'create_booking',
     {
       description:
-        'Reserve a selected slot after client confirmation. Use fictional client data only. Reuse request_id on retries. Currently unavailable: booking integration is not implemented.',
+        'Reserve a selected slot after client confirmation. Use fictional client data only. Reuse request_id on retries.',
       inputSchema: bookingSchema,
       annotations: {
         readOnlyHint: false,
@@ -40,13 +55,13 @@ export function createMcpServer() {
         openWorldHint: true,
       },
     },
-    unavailable,
+    bookings ? (input) => run(() => bookings.book(input)) : unavailable,
   );
   server.registerTool(
     'create_payment_link',
     {
       description:
-        'Create a Paystack test payment link for an existing booking using its configured fee. Does not verify payment. Currently unavailable: Paystack integration is not implemented.',
+        'Create or reuse a Paystack test checkout link for a pending booking using its stored fee. Retry with the same booking_id. A link does not confirm payment.',
       inputSchema: paymentSchema,
       annotations: {
         readOnlyHint: false,
@@ -54,7 +69,7 @@ export function createMcpServer() {
         openWorldHint: true,
       },
     },
-    unavailable,
+    payments ? (input) => run(() => payments.create(input)) : unavailable,
   );
   return server;
 }

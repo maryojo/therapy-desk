@@ -10,6 +10,16 @@ const list = z
       .filter(Boolean),
   );
 const environmentSchema = z.object({
+  PAYSTACK_SECRET_KEY: z
+    .string()
+    .regex(/^sk_test_[a-zA-Z0-9]+$/)
+    .optional(),
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().min(1).optional(),
+  GOOGLE_SERVICE_ACCOUNT_JSON: z.string().min(1).optional(),
+  GOOGLE_SHEETS_SPREADSHEET_ID: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]+$/)
+    .optional(),
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
     .default('development'),

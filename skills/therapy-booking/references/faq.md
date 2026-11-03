@@ -60,8 +60,7 @@ send meeting links.
 
 ## Can I cancel, reschedule, or request a refund?
 
-Explain policies.md and refer to staff. These actions are not implemented in the
-assistant.
+Explain policies.md and refer to staff. These actions are not implemented in the assistant.
 
 ## Can someone under 18 book?
 
