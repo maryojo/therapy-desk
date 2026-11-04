@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/td_logo.png" alt="TherapyDesk logo" width="400" />
+</p>
+
 # TherapyDesk
 
 A therapy practice’s administrative WhatsApp
